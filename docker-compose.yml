@@ -1,0 +1,123 @@
+# ======================================
+# 智能新闻助手 - 完整服务编排
+# 包含：MySQL + MinIO + Milvus + 应用服务
+# ======================================
+
+version: '3.8'
+
+services:
+  # --------------------------------------
+  # MySQL 数据库
+  # --------------------------------------
+  mysql:
+    image: mysql:8.0
+    container_name: mysql-news
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: 123456
+      MYSQL_DATABASE: news_db
+    volumes:
+      - ./docker-mysql/data:/var/lib/mysql
+      - ./sql/init_database.sql:/docker-entrypoint-initdb.d/init.sql
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # --------------------------------------
+  # MinIO 对象存储
+  # --------------------------------------
+  minio:
+    image: minio/minio:latest
+    container_name: minio-news
+    ports:
+      - "9000:9000"   # API端口
+      - "9001:9001"   # 控制台端口
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - ./docker-minio/data:/data
+    command: server /data --console-address ":9001"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # --------------------------------------
+  # Milvus 向量数据库依赖
+  # --------------------------------------
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.5
+    container_name: milvus-etcd
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+    volumes:
+      - ./docker-milvus/etcd:/etcd
+    command: >
+      etcd -advertise-client-urls=http://127.0.0.1:2379
+      -listen-client-urls http://0.0.0.0:2379
+      --data-dir /etcd
+    restart: unless-stopped
+
+  minio-milvus:
+    image: minio/minio:latest
+    container_name: milvus-minio
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    volumes:
+      - ./docker-milvus/minio:/minio_data
+    command: minio server /minio_data
+    restart: unless-stopped
+
+  # --------------------------------------
+  # Milvus 向量数据库
+  # --------------------------------------
+  milvus:
+    image: milvusdb/milvus:v2.3.3
+    container_name: milvus-standalone
+    ports:
+      - "19530:19530"  # gRPC端口
+      - "9091:9091"    # metrics端口
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio-milvus:9000
+    volumes:
+      - ./docker-milvus/milvus:/var/lib/milvus
+    command: ["milvus", "run", "standalone"]
+    depends_on:
+      - etcd
+      - minio-milvus
+    restart: unless-stopped
+
+  # --------------------------------------
+  # Attu - Milvus 可视化界面
+  # --------------------------------------
+  attu:
+    image: zilliz/attu:v2.3.5
+    container_name: milvus-attu
+    ports:
+      - "8000:3000"
+    environment:
+      MILVUS_URL: milvus:19530
+    depends_on:
+      - milvus
+    restart: unless-stopped
+
+# --------------------------------------
+# 数据卷定义
+# --------------------------------------
+volumes:
+  minio-data:
+  etcd-data:
+  milvus-minio-data:
+  milvus-data:

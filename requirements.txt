@@ -1,0 +1,41 @@
+# ======================================
+# 智能新闻助手 - 依赖包列表
+# ======================================
+
+# 配置管理
+python-dotenv>=1.0.0
+
+# 数据库
+pymysql>=1.1.0
+
+# 对象存储
+minio>=7.2.0
+
+# 向量数据库
+pymilvus>=2.3.0
+
+# 大模型 SDK
+zhipuai>=2.0.0
+langchain-community>=0.0.10
+
+# 爬虫框架
+scrapy>=2.11.0
+itemadapter>=0.8.0
+
+# 定时任务
+apscheduler>=3.10.0
+
+# Web 框架（飞书机器人）
+fastapi>=0.104.0
+uvicorn>=0.24.0
+
+# 加密库（飞书消息加解密）
+pycryptodome>=3.19.0
+
+# 飞书官方 SDK（长连接支持）
+larksuite-oapi>=1.0.0
+
+# 工具库
+requests>=2.31.0
+numpy>=1.24.0
+pandas>=2.0.0
