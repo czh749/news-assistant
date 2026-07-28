@@ -184,10 +184,10 @@ class SchedulerService:
         """
         运行新闻爬虫任务
         
-        每6小时执行一次的定时任务，调用新浪新闻爬虫模块抓取最新新闻。
+        每1小时执行一次的定时任务，调用新浪新闻爬虫模块抓取最新新闻。
         
         执行方式：
-        - 使用subprocess运行爬虫模块作为独立进程
+        - 使用 scrapy crawl sina 在 sina_news 目录下执行
         - 超时设置5分钟，防止爬虫卡死影响调度器
         - 捕获输出并记录到日志
         
@@ -200,25 +200,32 @@ class SchedulerService:
         try:
             import subprocess
             import sys
+            import os
             
-            # 运行爬虫模块作为子进程
-            # 使用python -m sina_news.spiders.sina方式执行
+            # 爬虫项目目录
+            crawler_dir = os.path.join(settings.BASE_DIR, "sina_news")
+            
+            # 使用 scrapy crawl sina 命令执行爬虫
             result = subprocess.run(
-                [sys.executable, "-m", "sina_news.spiders.sina"],
-                capture_output=True,  # 捕获标准输出和错误
-                text=True,  # 以文本模式返回输出
-                timeout=300  # 5分钟超时
+                [sys.executable, "-m", "scrapy", "crawl", "sina"],
+                capture_output=True,
+                text=True,
+                timeout=900,
+                cwd=crawler_dir
             )
             
             # 检查执行结果
             if result.returncode == 0:
                 logger.info("爬虫任务执行成功")
                 if result.stdout:
-                    # 限制输出长度，避免日志过大
-                    logger.info(f"爬虫输出: {result.stdout[:500]}")
+                    logger.info(f"爬虫输出: {result.stdout[-500:]}")
             else:
-                logger.error(f"爬虫任务失败: {result.stderr}")
+                logger.error(f"爬虫任务失败 (code={result.returncode})")
+                if result.stderr:
+                    logger.error(f"错误信息: {result.stderr[-500:]}")
                 
+        except subprocess.TimeoutExpired:
+            logger.error("爬虫任务超时（5分钟），已终止")
         except Exception as e:
             logger.error(f"爬虫任务异常: {e}", exc_info=True)
     

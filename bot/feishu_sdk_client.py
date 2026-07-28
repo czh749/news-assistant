@@ -164,7 +164,7 @@ class FeishuSDKClient:
 
     def send_text_message(self, open_id: str, text: str) -> bool:
         """
-        发送文本消息
+        发送文本消息（短文本用 text，长文本自动切换为 post 富文本避免折叠）
 
         Args:
             open_id: 用户的 open_id
@@ -173,6 +173,10 @@ class FeishuSDKClient:
         Returns:
             bool: 是否发送成功
         """
+        # 超过 300 字的内容改用富文本消息，避免飞书聊天窗口折叠显示
+        if len(text) > 300:
+            return self._send_post_message(open_id, text)
+
         try:
             # 创建客户端
             cli = lark.Client.builder() \
@@ -204,6 +208,94 @@ class FeishuSDKClient:
             logger.error(f"发送消息异常: {e}")
             import traceback
             logger.error(traceback.format_exc())
+            return False
+
+    def _send_post_message(self, open_id: str, text: str) -> bool:
+        """
+        发送飞书富文本消息（Post 类型，不会被折叠）
+
+        Args:
+            open_id: 用户的 open_id
+            text: 文本内容
+
+        Returns:
+            bool: 是否发送成功
+        """
+        try:
+            cli = lark.Client.builder() \
+                .app_id(self.app_id) \
+                .app_secret(self.app_secret) \
+                .build()
+
+            # 将文本按段落拆分，每个段落作为一个富文本块
+            paragraphs = text.split('\n')
+            content_blocks = []
+            for para in paragraphs:
+                if para.strip():
+                    content_blocks.append([
+                        {"tag": "text", "text": para}
+                    ])
+                else:
+                    # 空行分段
+                    content_blocks.append([
+                        {"tag": "text", "text": ""}
+                    ])
+
+            post_content = {
+                "zh_cn": {
+                    "title": "",
+                    "content": content_blocks
+                }
+            }
+
+            request = (lark.im.v1.CreateMessageRequest.builder()
+                      .receive_id_type("open_id")
+                      .request_body(lark.im.v1.CreateMessageRequestBody.builder()
+                                   .receive_id(open_id)
+                                   .msg_type("post")
+                                   .content(json.dumps(post_content, ensure_ascii=False))
+                                   .build())
+                      .build())
+
+            response = cli.im.v1.message.create(request)
+
+            if response.code == 0:
+                logger.info(f"富文本消息发送成功: {open_id}")
+                return True
+            else:
+                logger.error(f"富文本消息发送失败: {response.msg}")
+                # 降级：尝试发送纯文本
+                logger.info("降级为纯文本消息重试...")
+                return self._send_plain_text(open_id, text)
+
+        except Exception as e:
+            logger.error(f"发送富文本消息异常: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return False
+
+    def _send_plain_text(self, open_id: str, text: str) -> bool:
+        """发送纯文本消息（不做 post 转换）"""
+        try:
+            cli = lark.Client.builder() \
+                .app_id(self.app_id) \
+                .app_secret(self.app_secret) \
+                .build()
+
+            request = (lark.im.v1.CreateMessageRequest.builder()
+                      .receive_id_type("open_id")
+                      .request_body(lark.im.v1.CreateMessageRequestBody.builder()
+                                   .receive_id(open_id)
+                                   .msg_type("text")
+                                   .content(json.dumps({"text": text}))
+                                   .build())
+                      .build())
+
+            response = cli.im.v1.message.create(request)
+            return response.code == 0
+
+        except Exception as e:
+            logger.error(f"发送纯文本消息失败: {e}")
             return False
 
 

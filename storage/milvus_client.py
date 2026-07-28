@@ -197,7 +197,7 @@ class MilvusClient:
     
     def get_collection(self, collection_name: Optional[str] = None) -> Collection:
         """
-        获取集合对象
+        获取集合对象，不存在则自动创建
         
         Args:
             collection_name: 集合名称
@@ -208,7 +208,8 @@ class MilvusClient:
         name = collection_name or self.collection_name
         
         if not utility.has_collection(name, using=self._connection_alias):
-            raise ValueError(f"集合不存在: {name}")
+            logger.info(f"集合不存在，自动创建: {name}")
+            return self.create_collection(name)
         
         self._collection = Collection(name)
         return self._collection
