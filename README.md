@@ -101,7 +101,7 @@ graph TD
 ### 1. 克隆项目
 
 ```bash
-git clone https://github.com/your-username/news-assistant.git
+git clone https://github.com/czh749/news-assistant.git
 cd news-assistant
 ```
 
@@ -142,9 +142,11 @@ docker-compose up -d
 
 ### 5. 初始化数据库
 
+首次启动时，MySQL 会自动执行 `sql/init_database.sql`。如需手动重新执行：
+
 ```bash
 # 连接 MySQL 执行初始化脚本
-docker exec -i docker-mysql mysql -uroot -p123456 < sql/init_database.sql
+docker exec -i mysql-news mysql -uroot -p123456 news_db < sql/init_database.sql
 ```
 
 ### 6. 启动应用
@@ -207,9 +209,8 @@ news-assistant/
 ├── sql/                         # 数据库初始化脚本
 │   └── init_database.sql
 │
-└── docs/                        # 文档
-    ├── 智能新闻助手.md           # 架构设计文档
-    └── 开发计划.md               # 开发计划文档
+├── 智能新闻助手.md               # 架构设计文档
+└── 开发计划.md                   # 开发计划文档
 ```
 
 ---

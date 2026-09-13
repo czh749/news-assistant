@@ -27,7 +27,6 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from storage.mysql_client import MySQLClient, get_mysql_client
-from embedding import ZhipuEmbedding, get_embedding
 
 logger = logging.getLogger(__name__)
 
@@ -100,18 +99,15 @@ class UserService:
     def __init__(
         self,
         mysql_client: Optional[MySQLClient] = None,
-        embedding: Optional[ZhipuEmbedding] = None
     ):
         """
         初始化用户服务
         
         Args:
             mysql_client: MySQL数据库客户端
-            embedding: 嵌入模型，用于兴趣关键词向量化
         """
         # 使用传入的组件或获取默认实例
         self.db = mysql_client or get_mysql_client()
-        self.embedding = embedding or get_embedding()
         
         logger.info("用户服务初始化完成")
     
@@ -216,14 +212,6 @@ class UserService:
         try:
             # 确保用户存在（自动创建新用户）
             self.get_or_create_user(user_id)
-            
-            # 尝试对兴趣关键词进行向量化（用于后续个性化推荐）
-            # 向量化失败不会阻断主流程，只是降级处理
-            try:
-                embedding_vector = self.embedding.embed_query(interest_keyword)
-            except Exception as e:
-                logger.warning(f"兴趣关键词向量化失败: {e}")
-                embedding_vector = None
             
             # 插入或更新兴趣记录
             # ON DUPLICATE KEY UPDATE: 如果记录已存在则更新权重

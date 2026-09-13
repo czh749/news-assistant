@@ -27,7 +27,7 @@
 """
 
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Callable
 from datetime import datetime, timedelta
 from dataclasses import dataclass
 
@@ -100,7 +100,8 @@ class SchedulerService:
         embedding: Optional[ZhipuEmbedding] = None,
         milvus_client: Optional[MilvusClient] = None,
         minio_client: Optional[MinioClient] = None,
-        mysql_client: Optional[MySQLClient] = None
+        mysql_client: Optional[MySQLClient] = None,
+        message_sender: Optional[Callable[[str, str], bool]] = None,
     ):
         """
         初始化定时任务服务
@@ -115,6 +116,7 @@ class SchedulerService:
             milvus_client: Milvus向量数据库客户端
             minio_client: MinIO对象存储客户端
             mysql_client: MySQL数据库客户端
+            message_sender: 飞书消息发送函数，参数为用户ID和消息正文
         """
         # 初始化各个依赖组件（支持依赖注入）
         self.user_service = user_service or get_user_service()
@@ -123,11 +125,18 @@ class SchedulerService:
         self.milvus = milvus_client or MilvusClient()
         self.minio = minio_client or MinioClient()
         self.db = mysql_client or get_mysql_client()
+        self._message_sender = message_sender
         
         # 创建后台调度器（BackgroundScheduler在后台线程运行）
         self.scheduler = BackgroundScheduler()
         
         logger.info("定时任务服务初始化完成")
+
+    @staticmethod
+    def _build_date_filter(date: str) -> str:
+        """构造仅匹配指定自然日的 Milvus 发布时间过滤表达式。"""
+        normalized_date = datetime.strptime(date, "%Y-%m-%d").strftime("%Y-%m-%d")
+        return f'publish_time like "{normalized_date}%"'
     
     def start(self):
         """
@@ -294,6 +303,7 @@ class SchedulerService:
         """
         user_id = user_info['user_id']
         interests = user_info['interests']
+        date_filter = self._build_date_filter(date)
         
         logger.info(f"为用户 {user_id} 生成简报，兴趣数: {len(interests)}")
         
@@ -311,7 +321,8 @@ class SchedulerService:
                 results = self.milvus.search(
                     query_vector=query_vector,
                     top_k=3,
-                    output_fields=["news_id", "title", "source", "publish_time"]
+                    output_fields=["news_id", "title", "source", "publish_time"],
+                    filter_expr=date_filter,
                 )
                 
                 # 将权重信息附加到结果中（用于后续排序）
@@ -360,15 +371,22 @@ class SchedulerService:
         briefing_content = self._generate_briefing_content(user_info, news_details, date)
         
         # ========== 步骤5: 保存推送记录 ==========
-        self._save_push_record(
+        push_record_id = self._save_push_record(
             user_id=user_id,
             push_type='daily',
             content=briefing_content,
-            news_ids=[n['news_id'] for n in selected_news]
+            news_ids=[n['news_id'] for n in selected_news],
+            status='pending',
         )
         
         # ========== 步骤6: 推送给用户 ==========
-        self._push_to_user(user_id, briefing_content)
+        try:
+            if not self._push_to_user(user_id, briefing_content):
+                raise RuntimeError("飞书接口返回发送失败")
+            self._update_push_record_status(push_record_id, 'sent')
+        except Exception:
+            self._update_push_record_status(push_record_id, 'failed')
+            raise
         
         logger.info(f"用户 {user_id} 的简报生成完成，包含 {len(news_details)} 条新闻")
     
@@ -469,7 +487,14 @@ class SchedulerService:
                 fallback += f"{i}. {news.get('title', '无标题')}\n"
             return fallback
     
-    def _save_push_record(self, user_id: str, push_type: str, content: str, news_ids: List[str]):
+    def _save_push_record(
+        self,
+        user_id: str,
+        push_type: str,
+        content: str,
+        news_ids: List[str],
+        status: str = 'pending',
+    ) -> Optional[int]:
         """
         保存推送记录
         
@@ -482,16 +507,37 @@ class SchedulerService:
         import json
         
         try:
-            sql = """
-                INSERT INTO push_records (user_id, push_type, content, news_ids, status)
-                VALUES (%s, %s, %s, %s, 'sent')
-            """
-            self.db.execute(sql, (user_id, push_type, content, json.dumps(news_ids)))
+            record_id = self.db.insert(
+                "push_records",
+                {
+                    "user_id": user_id,
+                    "push_type": push_type,
+                    "content": content,
+                    "news_ids": json.dumps(news_ids, ensure_ascii=False),
+                    "status": status,
+                },
+            )
             logger.info(f"保存推送记录: {user_id}")
+            return record_id
         except Exception as e:
             logger.error(f"保存推送记录失败: {e}")
+            return None
+
+    def _update_push_record_status(self, record_id: Optional[int], status: str) -> None:
+        """更新推送结果；记录创建失败时不阻断实际消息发送。"""
+        if record_id is None:
+            return
+        try:
+            self.db.update(
+                "push_records",
+                {"status": status},
+                "id = %s",
+                (record_id,),
+            )
+        except Exception as e:
+            logger.error("更新推送记录 %s 状态失败: %s", record_id, e)
     
-    def _push_to_user(self, user_id: str, content: str):
+    def _push_to_user(self, user_id: str, content: str) -> bool:
         """
         推送给用户（飞书）
         
@@ -499,9 +545,17 @@ class SchedulerService:
             user_id: 用户ID
             content: 推送内容
         """
-        # TODO: 集成飞书SDK进行实际推送
-        # 这里先记录日志
-        logger.info(f"[推送至用户 {user_id}]:\n{content[:200]}...")
+        if self._message_sender is None:
+            from bot.feishu_sdk_client import FeishuSDKClient
+
+            self._message_sender = FeishuSDKClient().send_text_message
+
+        sent = self._message_sender(user_id, content)
+        if sent:
+            logger.info("简报推送成功: user_id=%s", user_id)
+        else:
+            logger.error("简报推送失败: user_id=%s", user_id)
+        return sent
     
     def generate_briefing_for_user(self, user_id: str) -> Optional[str]:
         """
@@ -530,6 +584,7 @@ class SchedulerService:
         }
         
         yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        date_filter = self._build_date_filter(yesterday)
         
         try:
             # 这里简化处理，实际应该调用 _generate_user_briefing
@@ -537,10 +592,16 @@ class SchedulerService:
             interest_news = []
             for interest in user_info['interests']:
                 try:
-                    query_vector = self.embedding.embed_query(interest['interest_keyword'])
-                    results = self.milvus.search(query_vector=query_vector, top_k=3)
+                    keyword = interest['keyword']
+                    query_vector = self.embedding.embed_query(keyword)
+                    results = self.milvus.search(
+                        query_vector=query_vector,
+                        top_k=3,
+                        output_fields=["news_id", "title", "source", "publish_time"],
+                        filter_expr=date_filter,
+                    )
                     for r in results:
-                        r['interest'] = interest['interest_keyword']
+                        r['interest'] = keyword
                         interest_news.append(r)
                 except Exception as e:
                     logger.warning(f"检索失败: {e}")

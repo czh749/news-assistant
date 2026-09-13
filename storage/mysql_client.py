@@ -115,7 +115,7 @@ class MySQLClient:
             logger.debug(f"执行SQL: {sql}, 影响行数: {affected}")
             return affected
     
-    def fetchone(
+    def fetch_one(
         self,
         sql: str,
         params: Optional[Tuple] = None
@@ -134,7 +134,7 @@ class MySQLClient:
             cursor.execute(sql, params)
             return cursor.fetchone()
     
-    def fetchall(
+    def fetch_all(
         self,
         sql: str,
         params: Optional[Tuple] = None
@@ -152,6 +152,21 @@ class MySQLClient:
         with self.get_cursor() as cursor:
             cursor.execute(sql, params)
             return cursor.fetchall()
+
+    # Backwards-compatible aliases for callers using PyMySQL-style names.
+    def fetchone(
+        self,
+        sql: str,
+        params: Optional[Tuple] = None
+    ) -> Optional[Dict[str, Any]]:
+        return self.fetch_one(sql, params)
+
+    def fetchall(
+        self,
+        sql: str,
+        params: Optional[Tuple] = None
+    ) -> List[Dict[str, Any]]:
+        return self.fetch_all(sql, params)
     
     def insert(
         self,
