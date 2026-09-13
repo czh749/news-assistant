@@ -39,8 +39,7 @@ Milvus是一个开源的向量数据库，专为处理大规模向量数据而�
 """
 
 import logging
-from typing import List, Dict, Any, Optional, Tuple
-import numpy as np
+from typing import List, Dict, Any, Optional
 from pymilvus import (
     connections,
     FieldSchema,
@@ -305,7 +304,8 @@ class MilvusClient:
         query_vector: List[float],
         top_k: int = 5,
         collection_name: Optional[str] = None,
-        output_fields: Optional[List[str]] = None
+        output_fields: Optional[List[str]] = None,
+        filter_expr: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         向量相似度搜索
@@ -315,6 +315,7 @@ class MilvusClient:
             top_k: 返回结果数量
             collection_name: 集合名称
             output_fields: 返回的字段列表
+            filter_expr: Milvus 标量过滤表达式，例如发布时间范围
             
         Returns:
             List[Dict]: 搜索结果列表，包含 id, distance, entity 等信息
@@ -331,26 +332,31 @@ class MilvusClient:
             "params": {"nprobe": 10}
         }
         
-        # 执行搜索
-        results = self._collection.search(
+        requested_fields = output_fields or ["news_id", "title", "source"]
+        search_kwargs = dict(
             data=[query_vector],
             anns_field="embedding",
             param=search_params,
             limit=top_k,
-            output_fields=output_fields or ["news_id", "title", "source"]
+            output_fields=requested_fields,
         )
+        if filter_expr:
+            search_kwargs["expr"] = filter_expr
+
+        # 执行搜索
+        results = self._collection.search(**search_kwargs)
         
         # 格式化结果
         formatted_results = []
         for hits in results:
             for hit in hits:
-                formatted_results.append({
+                item = {
                     "id": hit.id,
                     "distance": hit.distance,
-                    "news_id": hit.entity.get("news_id"),
-                    "title": hit.entity.get("title"),
-                    "source": hit.entity.get("source"),
-                })
+                }
+                for field_name in requested_fields:
+                    item[field_name] = hit.entity.get(field_name)
+                formatted_results.append(item)
         
         return formatted_results
     

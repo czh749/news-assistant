@@ -1,9 +1,5 @@
-"""
-配置模块
+"""配置模块，提供全局配置实例。"""
 
-提供全局配置实例 settings
-"""
+from .settings import Settings, settings
 
-from .settings import settings
-
-__all__ = ["settings"]
+__all__ = ["Settings", "settings"]

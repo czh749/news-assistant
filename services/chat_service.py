@@ -163,12 +163,16 @@ class ChatService:
             # ========== 步骤1: 意图识别 ==========
             # 调用意图识别服务分析用户消息
             intent_result = self.intent_service.recognize(user_message)
-            logger.info(f"用户消息: {user_message}, 识别意图: {intent_result.intent.value}")
+            logger.info(
+                "收到用户消息，长度=%s，识别意图=%s",
+                len(user_message),
+                intent_result.intent.value,
+            )
             
             # ========== 步骤2: 根据意图类型路由处理 ==========
             if intent_result.intent == IntentType.SEARCH:
                 # 搜索意图：执行向量检索和LLM生成
-                return self._handle_search_intent(intent_result)
+                return self._handle_search_intent(intent_result, user_id)
             
             elif intent_result.intent == IntentType.SET_INTEREST:
                 # 兴趣设置意图：添加或删除用户兴趣
@@ -194,8 +198,8 @@ class ChatService:
             
             else:
                 # 未知意图：默认尝试作为搜索处理
-                logger.warning(f"未知意图，尝试搜索: {user_message}")
-                return self._handle_search_intent(intent_result)
+                logger.warning("未知意图，按搜索请求处理")
+                return self._handle_search_intent(intent_result, user_id)
                 
         except Exception as e:
             # ========== 异常处理 ==========
@@ -209,7 +213,11 @@ class ChatService:
                 error_message=str(e)
             )
     
-    def _handle_search_intent(self, intent_result) -> ChatResponse:
+    def _handle_search_intent(
+        self,
+        intent_result,
+        user_id: Optional[str] = None,
+    ) -> ChatResponse:
         """
         处理搜索意图 - RAG完整流程
         
@@ -335,7 +343,11 @@ class ChatService:
             )
         
         # ========== 步骤5: LLM生成回答 ==========
-        reply_text = self._generate_search_reply(user_question, news_list)
+        reply_text = self._generate_search_reply(
+            user_question,
+            news_list,
+            session_id=user_id,
+        )
         
         return ChatResponse(
             reply_text=reply_text,
@@ -379,7 +391,12 @@ class ChatService:
             logger.error(f"从MinIO获取新闻失败: {e}")
             return None
     
-    def _generate_search_reply(self, user_question: str, news_list: List[SearchResult]) -> str:
+    def _generate_search_reply(
+        self,
+        user_question: str,
+        news_list: List[SearchResult],
+        session_id: Optional[str] = None,
+    ) -> str:
         """
         使用LLM基于搜索结果生成完整回答（RAG核心）
         
@@ -445,7 +462,8 @@ class ChatService:
             
             answer = self.llm.chat(
                 prompt,
-                system_prompt="你是专业的新闻助手，擅长基于检索到的新闻内容回答用户问题。回答要准确、简洁、有依据。"
+                system_prompt="你是专业的新闻助手，擅长基于检索到的新闻内容回答用户问题。回答要准确、简洁、有依据。",
+                session_id=session_id,
             )
             
             return answer
@@ -516,14 +534,14 @@ class ChatService:
             if success:
                 reply = f'[OK] 已取消关注 "{interest}" 相关新闻。\n\n您将不再收到该话题的推送。'
             else:
-                reply = f'取消关注失败，请稍后重试。'
+                reply = '取消关注失败，请稍后重试。'
         else:
             # 添加关注操作
             success = self.user_service.add_interest(user_id, interest, weight=1.0)
             if success:
                 reply = f'[OK] 已成功关注 "{interest}"！\n\n我会为您推荐相关新闻，并在每日简报中包含该话题的最新资讯。'
             else:
-                reply = f'添加关注失败，请稍后重试。'
+                reply = '添加关注失败，请稍后重试。'
         
         return ChatResponse(
             reply_text=reply,
@@ -532,15 +550,15 @@ class ChatService:
             success=success
         )
     
-    def clear_conversation_history(self):
+    def clear_conversation_history(self, user_id: Optional[str] = None):
         """
         清空对话历史
         
         清除LLM的对话历史记录，开始新的对话上下文。
         在多轮对话场景中使用，确保新的对话不受历史影响。
         """
-        self.llm.clear_history()
-        logger.info("对话历史已清空")
+        self.llm.clear_history(user_id)
+        logger.info("对话历史已清空: %s", user_id or "all")
 
 
 # =============================================================================

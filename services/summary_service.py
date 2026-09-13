@@ -4,12 +4,10 @@
 监听 MinIO 新文件，调用 GLM API 生成摘要，更新回 MinIO
 """
 
-import json
 import logging
 import time
-from datetime import datetime
-from typing import Optional, Dict, Any
-from pathlib import Path
+from datetime import datetime, timedelta
+from typing import Optional
 
 from config import settings
 from storage import MinioClient
@@ -186,7 +184,7 @@ class SummaryService:
                 news_data = self.minio_client.download_news(object_name)
                 if news_data:
                     self._update_retry_info(news_data, object_name, success=False)
-            except:
+            except Exception:
                 pass
             return False
     
